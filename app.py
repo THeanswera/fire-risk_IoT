@@ -396,14 +396,9 @@ if "selected_group_id" not in st.session_state:
 with st.sidebar:
     st.header("Управление (ползунки)")
 
-    pe_mode = st.radio(
-        "Расчёт P_э,i,j",
-        options=[
-            "По формуле №1140 (возможны промежуточные значения)",
-            "Упрощение: P_э ∈ {0.999; 0}",
-        ],
-        index=0,
-    )
+    st.markdown("### Расчёт P_э,i,j")
+    st.caption("Всегда по формуле №1140 (возможны промежуточные значения).")
+
 
     st.subheader("K_IoT (0…0.99) — шкалы адаптивности")
     k_sensors = st.slider("Сенсоры в ключевых точках", 0.0, K_MAX, 0.90, 0.01)
@@ -489,7 +484,6 @@ def compute_all(
     df_grp_in: pd.DataFrame,
     alpha: float,
     k_iot_total: float,
-    pe_mode: str,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float, float]:
 
     df_scen = df_scen_in.copy()
@@ -550,20 +544,14 @@ def compute_all(
     if missing.any():
         df_rows = df_rows.loc[~missing].copy()
 
-    if pe_mode.startswith("По формуле"):
-        df_rows["P_э,i,j"] = df_rows.apply(
-            lambda r: p_evac_1140_piecewise(
-                r["t_p,i,j (мин)"], r["t_бл,i (мин)"], r["t_н.э,i,j (мин)"], r["t_ск,i,j (мин)"]
-            ),
-            axis=1
-        )
-    else:
-        df_rows["P_э,i,j"] = df_rows.apply(
-            lambda r: p_evac_binary(
-                r["t_p,i,j (мин)"], r["t_бл,i (мин)"], r["t_н.э,i,j (мин)"], r["t_ск,i,j (мин)"]
-            ),
-            axis=1
-        )
+    # Pэ — всегда по формуле №1140 (возможны промежуточные значения)
+    df_rows["P_э,i,j"] = df_rows.apply(
+        lambda r: p_evac_1140_piecewise(
+            r["t_p,i,j (мин)"], r["t_бл,i (мин)"], r["t_н.э,i,j (мин)"], r["t_ск,i,j (мин)"]
+        ),
+        axis=1
+    )
+
 
     df_rows["R_i,j (традиц)"] = df_rows.apply(
         lambda r: r_ij(
@@ -836,7 +824,6 @@ df_scen_calc, df_rows_calc, df_agg, r_trad, r_iot = compute_all(
     st.session_state.df_grp,
     alpha=alpha,
     k_iot_total=k_iot_total,
-    pe_mode=pe_mode
 )
 
 # -----------------------------
@@ -896,7 +883,12 @@ else:
 # Таблицы результатов
 # -----------------------------
 st.markdown("### Агрегирование по сценариям и итог (формулы (2)–(3) №1140)")
-st.dataframe(df_agg, use_container_width=True)
+df_agg_view = format_df_scientific(
+    df_agg,
+    sci_cols=["R_i (традиц) = max_j", "R_i (IoT) = max_j"],
+    digits=2
+)
+st.dataframe(df_agg_view, use_container_width=True)
 
 st.markdown("### Построчный расчёт по группам (формула (4) №1140)")
 cols_show = [
@@ -907,7 +899,13 @@ cols_show = [
     "R_i,j (традиц)", "R_i,j (IoT)"
 ]
 cols_show = [c for c in cols_show if c in df_rows_calc.columns]
-st.dataframe(df_rows_calc[cols_show], use_container_width=True)
+df_rows_view = df_rows_calc[cols_show].copy()
+df_rows_view = format_df_scientific(
+    df_rows_view,
+    sci_cols=["R_i,j (традиц)", "R_i,j (IoT)", "Q_n,i (год^-1)"],
+    digits=2
+)
+st.dataframe(df_rows_view, use_container_width=True)
 
 st.markdown("### Промежуточные коэффициенты по сценариям (Kобн, KСОУЭ, KПДЗ, Kп.з)")
 cols_scen = [
@@ -921,8 +919,13 @@ cols_scen = [
     "P_пр,i",
 ]
 cols_scen = [c for c in cols_scen if c in df_scen_calc.columns]
-st.dataframe(df_scen_calc[cols_scen], use_container_width=True)
-
+df_scen_view = df_scen_calc[cols_scen].copy()
+df_scen_view = format_df_scientific(
+    df_scen_view,
+    sci_cols=["Q_n,i (год^-1)"] if "Q_n,i (год^-1)" in df_scen_view.columns else [],
+    digits=2
+)
+st.dataframe(df_scen_view, use_container_width=True)
 # -----------------------------
 # Формулы — свёрнутый блок
 # -----------------------------
