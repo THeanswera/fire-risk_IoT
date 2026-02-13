@@ -21,6 +21,12 @@ K_AP_MAX = 0.9  # ограничение интерфейса для Kап
 # =============================
 def clamp(x: float, lo: float, hi: float) -> float:
     return float(max(lo, min(hi, x)))
+def force_rerun():
+    try:
+        st.rerun()
+    except Exception:
+        # для старых версий streamlit
+        st.experimental_rerun()
 
 def safe_float(x, default=0.0) -> float:
     try:
@@ -601,16 +607,42 @@ def compute_all(
 # -----------------------------
 st.subheader("Исходные данные (таблицы редактируемые)")
 
-tab1, tab2 = st.tabs(["Сценарии i", "Группы j (контингенты)"])
+tab1, tab2 = st.tabs(["Сценарии i", "Группы j (по сценариям)"])
 
+# ==========================
+# TAB1: Сценарии
+# ==========================
 with tab1:
-    colA, colB = st.columns([1, 3])
-    with colA:
+    st.caption(
+        "K_обн,i, K_СОУЭ,i, K_ПДЗ,i задаются строго по №1140: либо 0.8 (выполняется хотя бы одно условие), либо 0."
+    )
+
+    # --- Текущая таблица сценариев ---
+    df_scen_raw = st.session_state.df_scen.copy()
+    if "Сценарий i" not in df_scen_raw.columns:
+        df_scen_raw["Сценарий i"] = np.arange(1, len(df_scen_raw) + 1, dtype=int)
+
+    df_scen_raw["Сценарий i"] = pd.to_numeric(df_scen_raw["Сценарий i"], errors="coerce").fillna(0).astype(int)
+    df_scen_raw = df_scen_raw.loc[df_scen_raw["Сценарий i"] > 0].copy()
+
+    scen_list = sorted(df_scen_raw["Сценарий i"].unique().tolist())
+    if len(scen_list) == 0:
+        scen_list = [1]
+
+    # --- Кнопки управления (ДО data_editor) ---
+    c1, c2, c3 = st.columns([1.2, 1.8, 2.0])
+
+    with c1:
         if st.button("➕ Добавить сценарий", use_container_width=True):
             df = st.session_state.df_scen.copy()
-            new_i = next_int_id(df["Сценарий i"], start_from=1)
-            df = pd.concat([df, pd.DataFrame([{
-                "Сценарий i": new_i,
+            if len(df) == 0:
+                next_i = 1
+            else:
+                df["Сценарий i"] = pd.to_numeric(df["Сценарий i"], errors="coerce").fillna(0).astype(int)
+                next_i = int(df["Сценарий i"].max()) + 1
+
+            new_row = {
+                "Сценарий i": next_i,
                 "Q_n,i (год^-1)": 4.0e-2,
                 "t_пр,i (ч/сут)": 12.0,
                 "t_бл,i (мин)": 12.0,
@@ -618,29 +650,45 @@ with tab1:
                 "ПС соответствует/не требуется/подтверждена? (Kобн=0.8)": True,
                 "СОУЭ соответствует/не требуется/подтверждена? (KСОУЭ=0.8)": True,
                 "ПДЗ соответствует/не требуется/подтверждена? (KПДЗ=0.8)": True,
-            }])], ignore_index=True)
+            }
+
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             st.session_state.df_scen = df
+            force_rerun()
 
-    st.caption("K_обн,i, K_СОУЭ,i, K_ПДЗ,i задаются строго по №1140: либо 0.8, либо 0.")
+    with c2:
+        scen_del = st.selectbox("Удалить сценарий", scen_list, key="scen_del_select")
+        if st.button("🗑️ Удалить выбранный сценарий", use_container_width=True):
+            # удаляем сценарий
+            df_s = st.session_state.df_scen.copy()
+            df_s["Сценарий i"] = pd.to_numeric(df_s["Сценарий i"], errors="coerce").fillna(0).astype(int)
+            df_s = df_s.loc[df_s["Сценарий i"] != int(scen_del)].copy()
+            st.session_state.df_scen = df_s
 
-    df_scen_preview = st.session_state.df_scen.copy()
+            # удаляем все группы, которые ссылались на этот сценарий
+            df_g = st.session_state.df_grp.copy()
+            df_g["Сценарий i"] = pd.to_numeric(df_g["Сценарий i"], errors="coerce").fillna(0).astype(int)
+            df_g = df_g.loc[df_g["Сценарий i"] != int(scen_del)].copy()
+            st.session_state.df_grp = df_g
+
+            force_rerun()
+
+    with c3:
+        st.info(
+            "Важно: кнопки работают ДО таблицы. Удаление сценария автоматически удаляет связанные группы.",
+            icon="ℹ️"
+        )
+
+    # --- Preview столбцы (read-only) ---
+    df_scen_raw = st.session_state.df_scen.copy()
+    df_scen_raw["Сценарий i"] = pd.to_numeric(df_scen_raw["Сценарий i"], errors="coerce").fillna(0).astype(int)
+    df_scen_raw = df_scen_raw.loc[df_scen_raw["Сценарий i"] > 0].copy()
+
+    # добавляем расчетные столбцы
+    df_scen_preview = df_scen_raw.copy()
     df_scen_preview["K_обн,i (расч.)"] = df_scen_preview["ПС соответствует/не требуется/подтверждена? (Kобн=0.8)"].astype(bool).map(lambda x: K_STD if x else 0.0)
     df_scen_preview["K_СОУЭ,i (расч., традиц)"] = df_scen_preview["СОУЭ соответствует/не требуется/подтверждена? (KСОУЭ=0.8)"].astype(bool).map(lambda x: K_STD if x else 0.0)
     df_scen_preview["K_ПДЗ,i (расч.)"] = df_scen_preview["ПДЗ соответствует/не требуется/подтверждена? (KПДЗ=0.8)"].astype(bool).map(lambda x: K_STD if x else 0.0)
-    df_tmp = st.session_state.df_scen.copy()
-    scen_list = sorted(pd.to_numeric(df_tmp["Сценарий i"], errors="coerce").dropna().astype(int).unique().tolist())
-    if len(scen_list) > 0:
-        scen_del = st.selectbox("Выбери сценарий для удаления", scen_list, index=0)
-        if st.button("🗑️ Удалить выбранный сценарий", use_container_width=True):
-            # Удаляем сценарий
-            st.session_state.df_scen = st.session_state.df_scen.loc[
-                pd.to_numeric(st.session_state.df_scen["Сценарий i"], errors="coerce").fillna(0).astype(int) != int(scen_del)
-            ].copy()
-
-            # И удаляем все группы, которые на него ссылаются
-            st.session_state.df_grp = st.session_state.df_grp.loc[
-                pd.to_numeric(st.session_state.df_grp["Сценарий i"], errors="coerce").fillna(0).astype(int) != int(scen_del)
-            ].copy()
 
     df_scen_edit = st.data_editor(
         df_scen_preview,
@@ -657,58 +705,94 @@ with tab1:
             "СОУЭ соответствует/не требуется/подтверждена? (KСОУЭ=0.8)": st.column_config.CheckboxColumn(),
             "ПДЗ соответствует/не требуется/подтверждена? (KПДЗ=0.8)": st.column_config.CheckboxColumn(),
         },
+        key="editor_scenarios"
     )
 
+    # сохраняем без preview-столбцов
     drop_cols = ["K_обн,i (расч.)", "K_СОУЭ,i (расч., традиц)", "K_ПДЗ,i (расч.)"]
-    st.session_state.df_scen = df_scen_edit.drop(columns=[c for c in drop_cols if c in df_scen_edit.columns], errors="ignore").copy()
+    df_scen_store = df_scen_edit.drop(columns=[c for c in drop_cols if c in df_scen_edit.columns], errors="ignore").copy()
+    df_scen_store["Сценарий i"] = pd.to_numeric(df_scen_store["Сценарий i"], errors="coerce").fillna(0).astype(int)
+    df_scen_store = df_scen_store.loc[df_scen_store["Сценарий i"] > 0].drop_duplicates(subset=["Сценарий i"], keep="first").copy()
+    st.session_state.df_scen = df_scen_store
 
+
+# ==========================
+# TAB2: Группы
+# ==========================
 with tab2:
-    colA, colB = st.columns([1, 3])
-    with colA:
+    st.caption(
+        "t_p,i,j — расчётное время эвакуации; t_н.э,i,j — время начала эвакуации; "
+        "t_ск,i,j — время существования скоплений. Эти величины влияют на P_э,i,j по формуле (6) №1140."
+    )
+
+    # актуальный список сценариев для привязки групп
+    df_scen_for_groups = st.session_state.df_scen.copy()
+    df_scen_for_groups["Сценарий i"] = pd.to_numeric(df_scen_for_groups["Сценарий i"], errors="coerce").fillna(0).astype(int)
+    scen_list2 = sorted(df_scen_for_groups.loc[df_scen_for_groups["Сценарий i"] > 0, "Сценарий i"].unique().tolist())
+    if len(scen_list2) == 0:
+        scen_list2 = [1]
+
+    # таблица групп
+    df_grp_raw = st.session_state.df_grp.copy()
+    df_grp_raw = ensure_unique_positive_int_ids(df_grp_raw, "ID", start_from=1)
+    df_grp_raw["Сценарий i"] = pd.to_numeric(df_grp_raw["Сценарий i"], errors="coerce").fillna(scen_list2[0]).astype(int)
+    st.session_state.df_grp = df_grp_raw
+
+    id_list = sorted(pd.to_numeric(df_grp_raw["ID"], errors="coerce").dropna().astype(int).unique().tolist())
+    if len(id_list) == 0:
+        id_list = [1]
+
+    # --- Кнопки управления (ДО data_editor) ---
+    g1, g2, g3 = st.columns([1.3, 1.7, 2.0])
+
+    with g1:
+        scen_for_new_group = st.selectbox("Сценарий для новой группы", scen_list2, key="add_group_scen")
         if st.button("➕ Добавить группу", use_container_width=True):
             df = st.session_state.df_grp.copy()
             df = ensure_unique_positive_int_ids(df, "ID", start_from=1)
-            new_id = next_int_id(df["ID"], start_from=1)
-            # по умолчанию привяжем к первому сценарию, если есть
-            scen_list = pd.to_numeric(st.session_state.df_scen["Сценарий i"], errors="coerce").dropna().astype(int).tolist()
-            scen_default = int(scen_list[0]) if len(scen_list) else 1
+            next_id = int(pd.to_numeric(df["ID"], errors="coerce").fillna(0).astype(int).max()) + 1 if len(df) else 1
 
-            df = pd.concat([df, pd.DataFrame([{
-                "ID": new_id,
-                "Сценарий i": scen_default,
+            new_row = {
+                "ID": next_id,
+                "Сценарий i": int(scen_for_new_group),
                 "Группа j": "Новая группа",
                 "t_p,i,j (мин)": 6.0,
-                "t_н.э,i,j (мин)": 1.0,
+                "t_н.э,i,j (мин)": 1.5,
                 "t_ск,i,j (мин)": 1.0,
-            }])], ignore_index=True)
+            }
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            st.session_state.df_grp = df
+            st.session_state.selected_group_id = int(next_id)
+            force_rerun()
+
+    with g2:
+        df_tmp = st.session_state.df_grp.copy()
+        df_tmp = ensure_unique_positive_int_ids(df_tmp, "ID", start_from=1)
+        id_list2 = sorted(pd.to_numeric(df_tmp["ID"], errors="coerce").dropna().astype(int).unique().tolist())
+        gid_del = st.selectbox("Удалить группу по ID", id_list2, key="del_group_id")
+        if st.button("🗑️ Удалить выбранную группу", use_container_width=True):
+            df = st.session_state.df_grp.copy()
+            df["ID"] = pd.to_numeric(df["ID"], errors="coerce").fillna(0).astype(int)
+            df = df.loc[df["ID"] != int(gid_del)].copy()
             df = ensure_unique_positive_int_ids(df, "ID", start_from=1)
             st.session_state.df_grp = df
 
-    st.caption(
-        "Добавляй строки: контингенты, маломобильные группы и т.п. "
-        "Каждая группа относится к конкретному сценарию i (колонка 'Сценарий i')."
-    )
+            if len(df) > 0:
+                st.session_state.selected_group_id = int(df["ID"].iloc[0])
+            force_rerun()
 
-    df_tmp = st.session_state.df_grp.copy()
-    df_tmp = ensure_unique_positive_int_ids(df_tmp, "ID", start_from=1)
-    id_list = sorted(pd.to_numeric(df_tmp["ID"], errors="coerce").dropna().astype(int).unique().tolist())
-    if len(id_list) > 0:
-        gid_del = st.selectbox("Выбери ID группы для удаления", id_list, index=0)
-        if st.button("🗑️ Удалить выбранную группу", use_container_width=True):
-            st.session_state.df_grp = st.session_state.df_grp.loc[
-                pd.to_numeric(st.session_state.df_grp["ID"], errors="coerce").fillna(0).astype(int) != int(gid_del)
-            ].copy()
-            # если удалили ту, что была выбрана в сайдбаре — переключим на первую
-            df_after = ensure_unique_positive_int_ids(st.session_state.df_grp.copy(), "ID", start_from=1)
-            st.session_state.df_grp = df_after
-            if len(df_after) > 0:
-                st.session_state.selected_group_id = int(df_after["ID"].iloc[0])
+    with g3:
+        st.info(
+            "Можно добавлять/удалять группы кнопками или напрямую через таблицу (num_rows='dynamic').",
+            icon="ℹ️"
+        )
 
-    df_grp_raw = ensure_unique_positive_int_ids(st.session_state.df_grp.copy(), "ID", start_from=1)
-    st.session_state.df_grp = df_grp_raw
+    # --- Таблица редактирования групп ---
+    df_grp_raw2 = st.session_state.df_grp.copy()
+    df_grp_raw2 = ensure_unique_positive_int_ids(df_grp_raw2, "ID", start_from=1)
 
     df_grp_edit = st.data_editor(
-        df_grp_raw,
+        df_grp_raw2,
         num_rows="dynamic",
         use_container_width=True,
         disabled=["ID"],
@@ -720,10 +804,29 @@ with tab2:
             "t_н.э,i,j (мин)": st.column_config.NumberColumn(format="%.3f"),
             "t_ск,i,j (мин)": st.column_config.NumberColumn(format="%.3f"),
         },
+        key="editor_groups"
     )
 
     df_grp_edit = ensure_unique_positive_int_ids(df_grp_edit, "ID", start_from=1)
+    df_grp_edit["Сценарий i"] = pd.to_numeric(df_grp_edit["Сценарий i"], errors="coerce").fillna(scen_list2[0]).astype(int)
     st.session_state.df_grp = df_grp_edit
+
+    def fmt_sci(x: float, digits: int = 2) -> str:
+        try:
+            v = float(x)
+            if math.isnan(v) or math.isinf(v):
+             return ""
+            return f"{v:.{digits}e}"
+        except Exception:
+            return str(x)
+
+    def format_df_scientific(df: pd.DataFrame, sci_cols: list[str], digits: int = 2) -> pd.DataFrame:
+        """Делает копию df и форматирует указанные числовые столбцы в e-нотацию (только для отображения)."""
+        out = df.copy()
+        for c in sci_cols:
+            if c in out.columns:
+                out[c] = out[c].apply(lambda v: fmt_sci(v, digits=digits) if pd.notna(v) else "")
+        return out
     
 # -----------------------------
 # Расчёт
