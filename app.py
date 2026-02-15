@@ -159,6 +159,8 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
     values = [v for v in [r_trad, r_iot, r_norm] if v > 0]
     log_min = math.floor(math.log10(min(values)))
     log_max = math.ceil(math.log10(max(values)))
+
+    # делаем шкалу не слишком "узкой"
     if (log_max - log_min) < 6:
         center = (log_max + log_min) / 2.0
         log_min = math.floor(center - 3)
@@ -174,32 +176,40 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
         return clamp(100.0 * t, 0.0, 100.0)
 
     ticks = list(range(int(log_min), int(log_max) + 1))
-    ticks_html = ""
+    ticks_parts = []
     for p in ticks:
-        y = y_log_percent(10 ** p)
-        ticks_html += f"""
+        y = y_log_percent(10.0 ** p)
+        ticks_parts.append(
+            f"""
 <div class="tick" style="top:{y:.6f}%">
   <div class="tick-line"></div>
   <div class="tick-label">10^{p}</div>
 </div>
-"""
+""".strip()
+        )
+    ticks_html = "\n".join(ticks_parts)
 
-    def marker(y: float, label: str, cls: str) -> str:
+    # Маркеры с управляемым сдвигом подписи:
+    #  - Rнорм: сверху линии (сильнее вверх)
+    #  - Rтрадиц: сверху линии (чуть вверх)
+    #  - RIoT: снизу линии
+    def marker(y: float, label: str, cls: str, text_shift_px: int) -> str:
         return f"""
 <div class="marker {cls}" style="top:{y:.6f}%">
   <div class="marker-line"></div>
-  <div class="marker-text">{label}</div>
+  <div class="marker-text" style="transform: translateY({text_shift_px}px);">{label}</div>
 </div>
-"""
+""".strip()
 
-    markers_html = marker(y_log_percent(r_norm), f"Rнорм = {r_norm:.1e}", "m-norm")
+    markers_parts = []
+    markers_parts.append(marker(y_log_percent(r_norm), f"Rнорм = {r_norm:.1e}", "m-norm", -26))
     if r_trad > 0:
-        markers_html += marker(y_log_percent(r_trad), f"Rтрадиц = {r_trad:.2e}", "m-trad")
+        markers_parts.append(marker(y_log_percent(r_trad), f"Rтрадиц = {r_trad:.2e}", "m-trad", -16))
     if r_iot > 0:
-        markers_html += marker(y_log_percent(r_iot), f"RIoT = {r_iot:.2e}", "m-iot")
+        markers_parts.append(marker(y_log_percent(r_iot), f"RIoT = {r_iot:.2e}", "m-iot", 10))
+    markers_html = "\n".join(markers_parts)
 
     # ---------- RIGHT: percent of Rnorm ----------
-    # Rnorm = 100%
     pct_norm = 100.0
     pct_trad = (r_trad / r_norm) * 100.0 if r_norm > 0 else 0.0
     pct_iot = (r_iot / r_norm) * 100.0 if r_norm > 0 else 0.0
@@ -240,9 +250,17 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
   .tick {{ position:absolute; left:18px; right:10px; transform:translateY(-50%); display:flex; gap:8px; align-items:center; }}
   .tick-line {{ height:1px; flex:1; background:var(--grid); }}
   .tick-label {{ font-size:11px; color:var(--muted); white-space:nowrap; }}
-  .marker {{ position:absolute; left:10px; right:10px; transform:translateY(-50%); }}
+
+  .marker {{ position:absolute; left:10px; right:10px; transform:translateY(-50%); pointer-events:none; }}
   .marker-line {{ height:4px; border-radius:999px; }}
-  .marker-text {{ font-size:11px; margin-top:6px; font-weight:650; }}
+  .marker-text {{
+    font-size:11px;
+    font-weight:750;
+    line-height:1.1;
+    white-space:nowrap;
+    text-shadow: 0 1px 10px rgba(0,0,0,0.65);
+  }}
+
   .m-norm .marker-line {{ background:var(--norm); }}
   .m-norm .marker-text {{ color:var(--norm); }}
   .m-trad .marker-line {{ background:var(--trad); }}
@@ -253,7 +271,6 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
   /* right percent bars */
   .legend {{ font-size:12px; color:var(--muted); margin-bottom:10px; line-height:1.35; }}
   .bars-box {{ position:relative; height:330px; border-radius:12px; background:rgba(0,0,0,0.15); border:1px solid rgba(255,255,255,0.10); overflow:hidden; padding:12px; }}
-  .plot {{ position:absolute; left:12px; right:12px; top:10px; bottom:12px; }}
   .note-top {{ font-size:11px; color:var(--muted); margin-bottom:6px; }}
 
   .bars {{ position:absolute; left:12px; right:12px; top:40px; bottom:16px; display:flex; gap:18px; align-items:stretch; }}
@@ -273,7 +290,7 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="title">Лог-шкала по степеням 10 (маркеры R)</div>
+      <div class="title">Сравнительная шкала ИПР (R)</div>
       <div class="scale-box">
         <div class="axis"></div>
         {ticks_html}
@@ -282,16 +299,12 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
     </div>
 
     <div class="card">
-      <div class="legend">
-        Справа — сравнение в <b>% от Rнорм</b>. Масштаб автоматически подстраивается по максимуму, чтобы столбики были различимы.
-      </div>
+      <div class="legend">Сравнение в <b>% от Rнорм</b>.</div>
       <div class="bars-box">
         <div class="note-top">Максимум шкалы: {pct_max:.1f}% от Rнорм</div>
         <div class="bars">
           <div class="col">
-            <div class="barwrap">
-              <div class="bar b-norm" style="height:{h_norm:.6f}%;"></div>
-            </div>
+            <div class="barwrap"><div class="bar b-norm" style="height:{h_norm:.6f}%;"></div></div>
             <div class="lbl">
               <div class="name" style="color:var(--norm)">Rнорм</div>
               <div class="val">{r_norm:.1e} год^-1</div>
@@ -300,9 +313,7 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
           </div>
 
           <div class="col">
-            <div class="barwrap">
-              <div class="bar b-trad" style="height:{h_trad:.6f}%;"></div>
-            </div>
+            <div class="barwrap"><div class="bar b-trad" style="height:{h_trad:.6f}%;"></div></div>
             <div class="lbl">
               <div class="name" style="color:var(--trad)">Rтрадиц</div>
               <div class="val">{r_trad:.6g} год^-1</div>
@@ -311,19 +322,17 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
           </div>
 
           <div class="col">
-            <div class="barwrap">
-              <div class="bar b-iot" style="height:{h_iot:.6f}%;"></div>
-            </div>
+            <div class="barwrap"><div class="bar b-iot" style="height:{h_iot:.6f}%;"></div></div>
             <div class="lbl">
               <div class="name" style="color:var(--iot)">RIoT</div>
               <div class="val">{r_iot:.6g} год^-1</div>
               <div class="pct">{pct_iot:.1f}%</div>
             </div>
           </div>
+
         </div>
       </div>
     </div>
-
   </div>
 </body>
 </html>
@@ -338,10 +347,9 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("ИПР по Методике №1140: традиционный расчёт и вариант с IoT-СОУЭ")
+st.title("Расчет индивидуального пожарного риска по Приказу МЧС России №1140: традиционный расчёт и вариант с IoT-СОУЭ")
 st.caption(
-    "Вариант с IoT-СОУЭ реализован как расширение через коэффициент Kп.з,i (формула (7) №1140) "
-    "за счёт изменения эффективного KСОУЭ,i. Остальные множители формулы риска (4) не изменяются."
+    ""
 )
 
 # -----------------------------
@@ -396,8 +404,8 @@ if "selected_group_id" not in st.session_state:
 with st.sidebar:
     st.header("Управление (ползунки)")
 
-    st.markdown("### Расчёт P_э,i,j")
-    st.caption("Всегда по формуле №1140 (возможны промежуточные значения).")
+    st.markdown("Настройте параметры адаптивности IoT-СОУЭ и надёжности её модулей, а также временные характеристики сценариев и групп. Результаты расчёта ИПР будут отображены на основном полотне справа.")
+    st.caption("")
 
 
     st.subheader("K_IoT (0…0.99) — шкалы адаптивности")
@@ -407,7 +415,7 @@ with st.sidebar:
     reaction_sec = st.slider("Время реакции системы (сек)", 0, 60, 10, 1)
     k_reaction = clamp(K_MAX * (1.0 - reaction_sec / 60.0), 0.0, K_MAX)
 
-    st.subheader("Надёжности модулей (0…0.99)")
+    st.subheader("Надёжности модулей ioT-СОУЭ (0…0.99)")
     k_det = st.slider("Надёжность обнаружения/локализации", 0.0, K_MAX, 0.95, 0.01)
     k_comm_main = st.slider("Надёжность основного канала связи", 0.0, K_MAX, 0.92, 0.01)
     k_comm_backup = st.slider("Надёжность резервного канала связи", 0.0, K_MAX, 0.90, 0.01)
@@ -593,7 +601,7 @@ def compute_all(
 # -----------------------------
 # Таблицы ввода + кнопки добавления строк
 # -----------------------------
-st.subheader("Исходные данные (таблицы редактируемые)")
+st.subheader("Исходные данные (редактируемые)")
 
 tab1, tab2 = st.tabs(["Сценарии i", "Группы j (по сценариям)"])
 
@@ -663,8 +671,7 @@ with tab1:
 
     with c3:
         st.info(
-            "Важно: кнопки работают ДО таблицы. Удаление сценария автоматически удаляет связанные группы.",
-            icon="ℹ️"
+            "Удаление сценария удалает связанные группы."
         )
 
     # --- Preview столбцы (read-only) ---
@@ -835,7 +842,14 @@ m1, m2, m3 = st.columns(3)
 with m1:
     st.metric("R (традиц), год^-1", f"{r_trad:.6g}")
 with m2:
-    st.metric("R (IoT-СОУЭ), год^-1", f"{r_iot:.6g}", delta=f"{(r_iot - r_trad):.2e}")
+    delta_val = r_iot - r_trad  # отрицательное = риск снизился (это хорошо)
+    st.metric(
+        "R (IoT-СОУЭ), год^-1",
+        f"{r_iot:.6g}",
+        delta=f"{delta_val:.2e}",
+        delta_color="inverse"   # минус будет зелёным
+    )
+
 with m3:
     if r_trad > 0:
         st.metric("Снижение, %", f"{(1.0 - r_iot / r_trad) * 100.0:.2f}%")
@@ -845,7 +859,7 @@ with m3:
 components.html(compare_risk_component_html(r_trad, r_iot, R_NORM), height=420, scrolling=False)
 
 # --- Прозрачный расчёт в основном полотне ---
-st.subheader("Прозрачный расчёт (промежуточные значения)")
+st.subheader("Динамический расчет коэффициентов адаптивности и надежности IoT-СОУЭ")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("K_IoT (по шкалам)", f"{k_iot_score:.3f}")
@@ -855,7 +869,7 @@ c4.metric("K_IoT_итог", f"{k_iot_total:.3f}")
 c5.metric("α·K_IoT_итог", f"{delta_k_soue:.3f}")
 
 # --- Вывод текущих "бегунков" (какие сейчас времена для выбранной группы) ---
-st.subheader("Текущие значения бегунков времени (выбранная группа)")
+st.subheader("Значения времён для выбранной группы для P_э,i,j (формула (6) №1140)")
 
 sel_id = int(st.session_state.selected_group_id)
 dfg = st.session_state.df_grp.copy()
@@ -890,7 +904,7 @@ df_agg_view = format_df_scientific(
 )
 st.dataframe(df_agg_view, use_container_width=True)
 
-st.markdown("### Построчный расчёт по группам (формула (4) №1140)")
+st.markdown("### Расчёт ИПР по группам (формула (4) №1140)")
 cols_show = [
     "ID", "Сценарий i", "Группа j",
     "t_бл,i (мин)", "t_p,i,j (мин)", "t_н.э,i,j (мин)", "t_ск,i,j (мин)",
@@ -907,7 +921,7 @@ df_rows_view = format_df_scientific(
 )
 st.dataframe(df_rows_view, use_container_width=True)
 
-st.markdown("### Промежуточные коэффициенты по сценариям (Kобн, KСОУЭ, KПДЗ, Kп.з)")
+st.markdown("### Промежуточные коэффициенты по сценариям")
 cols_scen = [
     "Сценарий i",
     "K_обн,i",
@@ -929,7 +943,7 @@ st.dataframe(df_scen_view, use_container_width=True)
 # -----------------------------
 # Формулы — свёрнутый блок
 # -----------------------------
-st.subheader("Метод (формулы и пошаговый алгоритм)")
+st.subheader("Сравнительные формулы для расчёта ИПР по традиционному методу и с IoT-СОУЭ")
 
 with st.expander("Показать/скрыть формулы", expanded=False):
     st.markdown("#### Традиционный расчёт по №1140")
@@ -949,7 +963,7 @@ P_{\text{э},i,j}=
 """)
 
     st.markdown("**Kп.з по формуле (7) №1140**")
-    st.latex(r"K_{\text{п.з},i}=1-(1-K_{\text{обн},i}\cdot K_{\text{СОУЭ},i})\cdot(1-K_{\text{обн},i}\cdot K_{\text{ПДЗ},i})")
+    st.latex(r"K_{\text{п.з,i}}=1-(1-K_{\text{обн},i}\cdot K_{\text{СОУЭ},i})\cdot(1-K_{\text{обн},i}\cdot K_{\text{ПДЗ},i})")
 
     st.markdown("#### Расчёт с IoT-СОУЭ (аддитивный вариант в демонстраторе)")
     st.latex(r"K^{(\text{IoT})}_{\text{СОУЭ},i}=\min\left(0{.}99,\ K_{\text{СОУЭ},i}+\alpha\cdot K^{\text{итог}}_{\text{IoT}}\right)")
@@ -976,13 +990,15 @@ if len(df_rows_diag) > 0 and "ID" in df_rows_diag.columns:
     t_ne = safe_float(row.get("t_н.э,i,j (мин)", 0.0))
     t_ck = safe_float(row.get("t_ск,i,j (мин)", 0.0))
     border = 0.8 * t_bl
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("0.8·t_бл, мин", f"{border:.3f}")
+    c2.metric("t_p, мин", f"{t_p:.3f}")
+    c3.metric("t_p+t_н.э, мин", f"{(t_p+t_ne):.3f}")
+    c4.metric("t_ск, мин", f"{t_ck:.3f}")
 
-    st.write(
-        f"0.8·t_бл = **{border:.3f}** мин; "
-        f"t_p = **{t_p:.3f}** мин; t_p + t_н.э = **{(t_p + t_ne):.3f}** мин; "
-        f"t_ск = **{t_ck:.3f}** мин."
-    )
-    st.write(f"P_э,i,j (по выбранному режиму) = **{safe_float(row.get('P_э,i,j', 0.0)):.3f}**")
+    st.metric("P_э,i,j", f"{safe_float(row.get('P_э,i,j', 0.0)):.3f}")
+
 
     if t_ck > 6:
         st.warning("t_ск > 6 мин ⇒ по формуле (6) P_э = 0.")
