@@ -10,11 +10,11 @@ import streamlit.components.v1 as components
 # =============================
 # Константы (№1140 + ограничения демонстратора)
 # =============================
-R_NORM = 1e-6   # год^-1 (норматив ИПР)
-P_E_MAX = 0.999 # по формуле (6) Методики №1140
-K_STD = 0.8     # Kобн,i, KСОУЭ,i, KПДЗ,i по №1140: либо 0.8, либо 0
-K_MAX = 0.99    # демонстратор: не допускаем 1.00
-K_AP_MAX = 0.9  # ограничение интерфейса для Kап
+R_NORM = 1e-6
+P_E_MAX = 0.999
+K_STD = 0.8
+K_MAX = 0.99
+K_AP_MAX = 0.9
 
 # =============================
 # Вспомогательные функции
@@ -231,10 +231,10 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
 <style>
   :root {{
     --bg: rgba(255,255,255,0.03);
-    --bd: rgba(255,255,255,0.14);
+    --bd: rgba(255,255,255,0.15);
     --txt: rgba(255,255,255,0.90);
     --muted: rgba(255,255,255,0.70);
-    --grid: rgba(255,255,255,0.14);
+    --grid: rgba(255,255,255,0.15);
     --norm: #ff4d4d;
     --trad: #7aa6ff;
     --iot:  #7dffb3;
@@ -402,11 +402,10 @@ if "selected_group_id" not in st.session_state:
 # Sidebar: управление (БЕЗ вывода "прозрачного расчёта")
 # -----------------------------
 with st.sidebar:
-    st.header("Управление (ползунки)")
+    st.header("Управление параметрами и сценариями")
 
-    st.markdown("Настройте параметры адаптивности IoT-СОУЭ и надёжности её модулей, а также временные характеристики сценариев и групп. Результаты расчёта ИПР будут отображены на основном полотне справа.")
+    st.markdown("Настройка параметров адаптивности IoT-СОУЭ и надёжности её модулей, а также временных характеристик сценариев и групп. Результаты расчёта ИПР будут отображены на основном полотне справа.")
     st.caption("")
-
 
     st.subheader("K_IoT (0…0.99) — шкалы адаптивности")
     k_sensors = st.slider("Сенсоры в ключевых точках", 0.0, K_MAX, 0.90, 0.01)
@@ -426,7 +425,7 @@ with st.sidebar:
 
     alpha = st.slider("α (0.10…0.30)", 0.10, 0.30, 0.20, 0.01)
 
-    st.subheader("Бегунки времён (без Pathfinder)")
+    st.subheader("Значения времён по FDS (редактируемые)")
     df_grp_sel = st.session_state.df_grp.copy()
     if len(df_grp_sel) > 0:
         df_grp_sel["label"] = df_grp_sel.apply(
@@ -434,7 +433,7 @@ with st.sidebar:
             axis=1
         )
         labels = df_grp_sel["label"].to_list()
-        sel_label = st.selectbox("Выбери группу для настройки", labels, index=0)
+        sel_label = st.selectbox("Выбор группы для настройки", labels, index=0)
 
         sel_id = int(df_grp_sel.loc[df_grp_sel["label"] == sel_label, "ID"].iloc[0])
         st.session_state.selected_group_id = sel_id
@@ -671,7 +670,7 @@ with tab1:
 
     with c3:
         st.info(
-            "Удаление сценария удалает связанные группы."
+            "Удаление сценария удалает связанные группы.", icon="ℹ️"
         )
 
     # --- Preview столбцы (read-only) ---
@@ -778,7 +777,7 @@ with tab2:
 
     with g3:
         st.info(
-            "Можно добавлять/удалять группы кнопками или напрямую через таблицу (num_rows='dynamic').",
+            "Добавьте/удалите группу или напрямую через таблицу.",
             icon="ℹ️"
         )
 
@@ -834,7 +833,7 @@ df_scen_calc, df_rows_calc, df_agg, r_trad, r_iot = compute_all(
 )
 
 # -----------------------------
-# Основное полотно: результаты + графика + "прозрачный расчёт" (ПО ТВОЕЙ ПРОСЬБЕ)
+# Основное полотно: результаты + графика + расчёт
 # -----------------------------
 st.subheader("Результаты расчёта")
 
@@ -842,12 +841,12 @@ m1, m2, m3 = st.columns(3)
 with m1:
     st.metric("R (традиц), год^-1", f"{r_trad:.6g}")
 with m2:
-    delta_val = r_iot - r_trad  # отрицательное = риск снизился (это хорошо)
+    delta_val = r_iot - r_trad # абсолютная разница
     st.metric(
         "R (IoT-СОУЭ), год^-1",
         f"{r_iot:.6g}",
         delta=f"{delta_val:.2e}",
-        delta_color="inverse"   # минус будет зелёным
+        delta_color="inverse"   # зеленый минус
     )
 
 with m3:
@@ -858,7 +857,7 @@ with m3:
 
 components.html(compare_risk_component_html(r_trad, r_iot, R_NORM), height=420, scrolling=False)
 
-# --- Прозрачный расчёт в основном полотне ---
+# --- Расчёт в основном полотне ---
 st.subheader("Динамический расчет коэффициентов адаптивности и надежности IoT-СОУЭ")
 
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -868,7 +867,7 @@ c3.metric("K_над", f"{k_rel:.3f}")
 c4.metric("K_IoT_итог", f"{k_iot_total:.3f}")
 c5.metric("α·K_IoT_итог", f"{delta_k_soue:.3f}")
 
-# --- Вывод текущих "бегунков" (какие сейчас времена для выбранной группы) ---
+# --- Вывод текущих "бегунков" (данные времен выбранной группы) ---
 st.subheader("Значения времён для выбранной группы для P_э,i,j (формула (6) №1140)")
 
 sel_id = int(st.session_state.selected_group_id)
@@ -891,7 +890,7 @@ if len(row_g) > 0:
     cc5.metric("t_н.э,i,j (мин)", f"{safe_float(row_g['t_н.э,i,j (мин)']):.3f}")
     st.metric("t_ск,i,j (мин)", f"{safe_float(row_g['t_ск,i,j (мин)']):.3f}")
 else:
-    st.info("Выбранная группа не найдена (возможно, ты удалил строку). Выбери группу в левом меню.")
+    st.info("Выбранная группа не найдена (возможно, вы удалили строку). Выберите группу в левом меню.")
 
 # -----------------------------
 # Таблицы результатов
@@ -941,7 +940,7 @@ df_scen_view = format_df_scientific(
 )
 st.dataframe(df_scen_view, use_container_width=True)
 # -----------------------------
-# Формулы — свёрнутый блок
+# Формулы — разворачиваемый блок
 # -----------------------------
 st.subheader("Сравнительные формулы для расчёта ИПР по традиционному методу и с IoT-СОУЭ")
 
@@ -965,7 +964,7 @@ P_{\text{э},i,j}=
     st.markdown("**Kп.з по формуле (7) №1140**")
     st.latex(r"K_{\text{п.з,i}}=1-(1-K_{\text{обн},i}\cdot K_{\text{СОУЭ},i})\cdot(1-K_{\text{обн},i}\cdot K_{\text{ПДЗ},i})")
 
-    st.markdown("#### Расчёт с IoT-СОУЭ (аддитивный вариант в демонстраторе)")
+    st.markdown("#### Расчёт с IoT-СОУЭ")
     st.latex(r"K^{(\text{IoT})}_{\text{СОУЭ},i}=\min\left(0{.}99,\ K_{\text{СОУЭ},i}+\alpha\cdot K^{\text{итог}}_{\text{IoT}}\right)")
     st.latex(r"K^{\text{итог}}_{\text{IoT}}=\min\left(0{.}99,\ K_{\text{IoT}}\cdot K_{\text{над}}\right)")
     st.latex(r"K_{\text{связь}} = 1-(1-K_{\text{канал осн}})\cdot(1-K_{\text{канал рез}})")
