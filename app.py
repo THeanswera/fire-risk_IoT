@@ -7,18 +7,16 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-# =============================
-# Константы (№1140 + ограничения демонстратора)
-# =============================
+
+# Константы №1140
 R_NORM = 1e-6
 P_E_MAX = 0.999
 K_STD = 0.8
 K_MAX = 0.99
 K_AP_MAX = 0.9
 
-# =============================
+
 # Вспомогательные функции
-# =============================
 def clamp(x: float, lo: float, hi: float) -> float:
     return float(max(lo, min(hi, x)))
 def force_rerun():
@@ -80,9 +78,8 @@ def next_int_id(series: pd.Series, start_from: int = 1) -> int:
     m = int(s.max())
     return max(start_from, m + 1)
 
-# =============================
+
 # Формулы Методики №1140 (в части ИПР)
-# =============================
 def p_presence(t_pr_hours: float) -> float:
     # Pпр,i = tпр,i / 24
     return clamp(safe_float(t_pr_hours) / 24.0, 0.0, 1.0)
@@ -147,9 +144,59 @@ def r_ij(q_n: float, k_ap: float, p_pr: float, p_e: float, k_pz_i: float) -> flo
     val = q_n * (1.0 - k_ap) * p_pr * (1.0 - p_e) * (1.0 - k_pz_i)
     return max(0.0, float(val))
 
-# =============================
+def k_reaction_iot(reaction_sec: float) -> float:
+    """
+    Kреак = max(0; 1 - tреак/60)
+    По методике верхняя граница 0.99 применяется только на финальном шаге K_IoT_итог.
+    """
+    reaction_sec = max(0.0, safe_float(reaction_sec))
+    return clamp(1.0 - reaction_sec / 60.0, 0.0, 1.0)
+
+def k_iot_adaptivity_score(
+    k_sensors: float,
+    k_routing: float,
+    k_automation: float,
+    k_reaction: float,
+) -> float:
+    vals = [
+        clamp(safe_float(k_sensors), 0.0, K_MAX),
+        clamp(safe_float(k_routing), 0.0, K_MAX),
+        clamp(safe_float(k_automation), 0.0, K_MAX),
+        clamp(safe_float(k_reaction), 0.0, 1.0),
+    ]
+    return clamp(float(np.mean(vals)), 0.0, 1.0)
+
+def k_comm_or(k_main: float, k_backup: float) -> float:
+    """
+    Kсвязь = 1 - (1 - Kосн) * (1 - Kрез)
+    Комбинированная надежность канала связи может быть больше 0.99.
+    """
+    k_main = clamp(safe_float(k_main), 0.0, K_MAX)
+    k_backup = clamp(safe_float(k_backup), 0.0, K_MAX)
+    val = 1.0 - (1.0 - k_main) * (1.0 - k_backup)
+    return clamp(val, 0.0, 1.0)
+
+def k_rel_iot_chain(
+    k_det: float,
+    k_comm: float,
+    k_logic: float,
+    k_alert: float,
+    k_power: float,
+    p_cyber: float,
+) -> float:
+    cyber_factor = clamp(1.0 - safe_float(p_cyber), 0.0, 1.0)
+    val = (
+        clamp(safe_float(k_det), 0.0, K_MAX)
+        * clamp(safe_float(k_comm), 0.0, 1.0)
+        * clamp(safe_float(k_logic), 0.0, K_MAX)
+        * clamp(safe_float(k_alert), 0.0, K_MAX)
+        * clamp(safe_float(k_power), 0.0, K_MAX)
+        * cyber_factor
+    )
+    return clamp(val, 0.0, 1.0)
+
+
 # Графика: ЛОГ-шкала слева + "как на рисунке" справа (три столбца до Rнорм)
-# =============================
 def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> str:
     r_trad = float(r_trad) if (r_trad and r_trad > 0) else 0.0
     r_iot = float(r_iot) if (r_iot and r_iot > 0) else 0.0
@@ -189,10 +236,7 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
         )
     ticks_html = "\n".join(ticks_parts)
 
-    # Маркеры с управляемым сдвигом подписи:
-    #  - Rнорм: сверху линии (сильнее вверх)
-    #  - Rтрадиц: сверху линии (чуть вверх)
-    #  - RIoT: снизу линии
+    # Левая шкала сравнения
     def marker(y: float, label: str, cls: str, text_shift_px: int) -> str:
         return f"""
 <div class="marker {cls}" style="top:{y:.6f}%">
@@ -209,7 +253,7 @@ def compare_risk_component_html(r_trad: float, r_iot: float, r_norm: float) -> s
         markers_parts.append(marker(y_log_percent(r_iot), f"RIoT = {r_iot:.2e}", "m-iot", 10))
     markers_html = "\n".join(markers_parts)
 
-    # ---------- RIGHT: percent of Rnorm ----------
+    # Правая шкала сравнения    
     pct_norm = 100.0
     pct_trad = (r_trad / r_norm) * 100.0 if r_norm > 0 else 0.0
     pct_iot = (r_iot / r_norm) * 100.0 if r_norm > 0 else 0.0
@@ -407,14 +451,14 @@ with st.sidebar:
     st.markdown("Настройка параметров адаптивности IoT-СОУЭ и надёжности её модулей, а также временных характеристик сценариев и групп. Результаты расчёта ИПР будут отображены на основном полотне справа.")
     st.caption("")
 
-    st.subheader("K_IoT (0…0.99) — шкалы адаптивности")
+    st.subheader("Шкалы адаптивности IoT-СОУЭ")
     k_sensors = st.slider("Сенсоры в ключевых точках", 0.0, K_MAX, 0.90, 0.01)
     k_routing = st.slider("Адаптация маршрутов", 0.0, K_MAX, 0.85, 0.01)
     k_automation = st.slider("Автоматизация решений", 0.0, K_MAX, 0.85, 0.01)
     reaction_sec = st.slider("Время реакции системы (сек)", 0, 60, 10, 1)
-    k_reaction = clamp(K_MAX * (1.0 - reaction_sec / 60.0), 0.0, K_MAX)
+    k_reaction = k_reaction_iot(reaction_sec)
 
-    st.subheader("Надёжности модулей ioT-СОУЭ (0…0.99)")
+    st.subheader("Надёжности модулей IoT-СОУЭ (входные шкалы 0…0.99)")
     k_det = st.slider("Надёжность обнаружения/локализации", 0.0, K_MAX, 0.95, 0.01)
     k_comm_main = st.slider("Надёжность основного канала связи", 0.0, K_MAX, 0.92, 0.01)
     k_comm_backup = st.slider("Надёжность резервного канала связи", 0.0, K_MAX, 0.90, 0.01)
@@ -470,15 +514,9 @@ with st.sidebar:
 # -----------------------------
 # Промежуточные вычисления IoT (чтобы вывести В ОСНОВНОМ ПОЛОТНЕ)
 # -----------------------------
-k_iot_score = float(np.mean([k_sensors, k_routing, k_automation, k_reaction]))
-k_iot_score = clamp(k_iot_score, 0.0, K_MAX)
-
-cyber_factor = clamp(1.0 - p_cyber, 0.0, K_MAX)
-k_comm = 1.0 - (1.0 - k_comm_main) * (1.0 - k_comm_backup)
-k_comm = clamp(k_comm, 0.0, K_MAX)
-
-k_rel = k_det * k_comm * k_logic * k_alert * k_power * cyber_factor
-k_rel = clamp(k_rel, 0.0, K_MAX)
+k_iot_score = k_iot_adaptivity_score(k_sensors, k_routing, k_automation, k_reaction)
+k_comm = k_comm_or(k_comm_main, k_comm_backup)
+k_rel = k_rel_iot_chain(k_det, k_comm, k_logic, k_alert, k_power, p_cyber)
 
 k_iot_total = clamp(k_iot_score * k_rel, 0.0, K_MAX)
 delta_k_soue = clamp(alpha * k_iot_total, 0.0, K_MAX)
@@ -966,6 +1004,8 @@ P_{\text{э},i,j}=
 
     st.markdown("#### Расчёт с IoT-СОУЭ")
     st.latex(r"K^{(\text{IoT})}_{\text{СОУЭ},i}=\min\left(0{.}99,\ K_{\text{СОУЭ},i}+\alpha\cdot K^{\text{итог}}_{\text{IoT}}\right)")
+    st.latex(r"K_{\text{реак}}=\max\left(0,\ 1-\dfrac{t_{\text{реак}}}{60}\right)")
+    st.latex(r"K_{\text{IoT}}=\dfrac{K_{\text{сенс}}+K_{\text{марш}}+K_{\text{автом}}+K_{\text{реак}}}{4}")
     st.latex(r"K^{\text{итог}}_{\text{IoT}}=\min\left(0{.}99,\ K_{\text{IoT}}\cdot K_{\text{над}}\right)")
     st.latex(r"K_{\text{связь}} = 1-(1-K_{\text{канал осн}})\cdot(1-K_{\text{канал рез}})")
     st.latex(r"K_{\text{над}} = K_{\text{обнаруж}}\cdot K_{\text{связь}}\cdot K_{\text{логика}}\cdot K_{\text{оповещ}}\cdot K_{\text{питание}}\cdot(1-p_{\text{cyber}})")
